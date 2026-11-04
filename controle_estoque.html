@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17324d">
+<title>Estoque Interno</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<style>
+:root{--navy:#17324d;--blue:#2563eb;--bg:#f3f6fa;--line:#dce3eb;--muted:#64748b;--green:#15803d;--red:#b91c1c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#172033;font:15px system-ui,-apple-system,Segoe UI,sans-serif}
+header{background:var(--navy);color:white;padding:18px max(16px,env(safe-area-inset-left));}
+header h1{font-size:21px;margin:0}header p{margin:4px 0 0;color:#d7e2ee;font-size:13px}
+main{max-width:980px;margin:auto;padding:14px}
+.tabs{display:flex;gap:8px;overflow:auto;margin:4px 0 14px}
+.tabs button{white-space:nowrap;background:#e5ebf2;color:#20344a}
+button,.filebtn{border:0;border-radius:10px;padding:11px 14px;background:var(--blue);color:white;font-weight:650;font-size:14px;cursor:pointer}
+button.secondary,.filebtn{background:#e7edf5;color:#1e334a}button.danger{background:#b91c1c}button.success{background:var(--green)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.panel{display:none;background:white;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px #1720330a}
+.panel.active{display:block}.panel h2{font-size:18px;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}
+label{font-size:13px;font-weight:650;color:#334155}
+input,select{width:100%;min-width:0;padding:12px;border:1px solid #cbd5e1;border-radius:9px;font:inherit;background:white}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.note{font-size:12px;color:var(--muted);line-height:1.5;margin:10px 0}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
+.stat{background:white;border:1px solid var(--line);border-radius:12px;padding:12px}
+.stat strong{display:block;font-size:22px}.stat span{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle}th{color:#475569;background:#f8fafc}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+.search{margin:0 0 10px}
+#scanner{width:100%;max-height:300px;background:#111;border-radius:10px;display:none;object-fit:cover}
+#scanStatus{font-size:13px;color:var(--muted);margin-top:8px}
+.badge{display:inline-block;background:#e8f1ff;color:#1d4ed8;padding:3px 7px;border-radius:20px;font-size:11px}
+.empty{padding:20px;text-align:center;color:var(--muted)}
+#labelPreview{display:flex;justify-content:center;padding:12px;background:#fff;border:1px dashed #cbd5e1;border-radius:10px;margin-top:12px}
+@media(max-width:560px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}.stat{padding:9px}.stat strong{font-size:19px}main{padding:10px}.panel{padding:13px}}
+@media print{body *{visibility:hidden!important}#printArea,#printArea *{visibility:visible!important}#printArea{position:absolute;left:0;top:0;width:100%;display:flex;flex-direction:column;align-items:center;color:#000}#printArea .printName{font-size:14pt;font-weight:bold;margin:0 0 4mm}#printArea svg{width:65mm;height:auto}#printArea .printCode{font-size:10pt;margin-top:2mm}}
+</style>
+</head>
+<body>
+<header><h1>Controle Interno de Estoque</h1><p>Cadastro, entrada, saída, leitura e impressão de etiquetas</p></header>
+<main>
+<div class="stats">
+ <div class="stat"><strong id="totalProducts">0</strong><span>Produtos ativos</span></div>
+ <div class="stat"><strong id="totalUnits">0</strong><span>Unidades em estoque</span></div>
+ <div class="stat"><strong id="totalLow">0</strong><span>Itens zerados</span></div>
+</div>
+<nav class="tabs">
+ <button onclick="showTab('inventory')">Estoque</button>
+ <button onclick="showTab('new')">Novo produto</button>
+ <button onclick="showTab('movement')">Entrada / saída</button>
+ <button onclick="showTab('labels')">Etiquetas</button>
+ <button onclick="showTab('data')">Excel / dados</button>
+</nav>
+
+<section id="inventory" class="panel active">
+ <h2>Produtos cadastrados</h2>
+ <input class="search" id="search" placeholder="Pesquisar por nome ou código de barras..." oninput="renderInventory()">
+ <div class="tablewrap"><table><thead><tr><th>Produto</th><th>Código</th><th>Qtd.</th><th>Ação</th></tr></thead><tbody id="inventoryRows"></tbody></table></div>
+ <p class="note">Produtos com quantidade zero podem ser arquivados. O histórico de movimentações permanece salvo.</p>
+</section>
+
+<section id="new" class="panel">
+ <h2>Cadastrar novo produto</h2>
+ <div class="grid">
+  <div class="field full"><label for="newName">Nome do produto *</label><input id="newName" placeholder="Ex.: Caixa organizadora"></div>
+  <div class="field"><label for="newQty">Quantidade inicial</label><input id="newQty" type="number" min="0" step="1" value="0"></div>
+  <div class="field"><label for="newCode">Código de barras</label><input id="newCode" placeholder="Gerado automaticamente"></div>
+ </div>
+ <div class="actions"><button class="secondary" onclick="generateCode()">Gerar código</button><button onclick="addProduct()">Cadastrar produto</button></div>
+ <p class="note">O código gerado é EAN-13. Você também pode informar um código próprio, desde que ainda não esteja cadastrado.</p>
+</section>
+
+<section id="movement" class="panel">
+ <h2>Registrar entrada ou saída</h2>
+ <div class="field"><label for="moveCode">Código de barras do produto</label><input id="moveCode" placeholder="Digite ou leia o código"></div>
+ <div class="actions"><button class="secondary" onclick="startScan('moveCode')">📷 Ler código pela câmera</button></div>
+ <div class="grid" style="margin-top:12px">
+  <div class="field"><label for="moveQty">Quantidade *</label><input id="moveQty" type="number" min="1" step="1" value="1"></div>
+  <div class="field"><label for="moveType">Movimentação</label><select id="moveType"><option value="in">Entrada</option><option value="out">Saída</option></select></div>
+  <div class="field full"><label for="moveNote">Observação (opcional)</label><input id="moveNote" placeholder="Ex.: reposição, setor, responsável..."></div>
+ </div>
+ <div class="actions"><button onclick="registerMovement()">Confirmar movimentação</button></div>
+ <p id="moveFeedback" class="note"></p>
+ <video id="scanner" playsinline></video><div id="scanStatus"></div>
+</section>
+
+<section id="labels" class="panel">
+ <h2>Gerar e imprimir etiqueta</h2>
+ <div class="field"><label for="labelProduct">Selecionar produto</label><select id="labelProduct" onchange="drawLabel()"><option value="">Selecione...</option></select></div>
+ <div class="actions"><button class="secondary" onclick="startScan('labelCode')">📷 Ler código pela câmera</button></div>
+ <input id="labelCode" placeholder="Ou informe o código de barras" oninput="selectLabelByCode()" style="margin-top:10px">
+ <div id="labelPreview"><span class="note">A etiqueta aparecerá aqui.</span></div>
+ <div class="actions"><button onclick="printLabel()">Imprimir etiqueta</button></div>
+ <p class="note">Na impressão, escolha o tamanho de papel/etiqueta adequado na configuração da impressora. O navegador abrirá a tela de impressão.</p>
+</section>
+
+<section id="data" class="panel">
+ <h2>Banco de dados Excel</h2>
+ <p>Importe uma planilha para carregar produtos ou exporte o estoque e o histórico para um arquivo Excel.</p>
+ <div class="actions"><button class="success" onclick="exportExcel()">Exportar para Excel (.xlsx)</button><label class="filebtn">Importar Excel<input id="excelFile" type="file" accept=".xlsx,.xls,.csv" hidden onchange="importExcel(event)"></label></div>
+ <p class="note">A planilha de produtos deve ter colunas <b>codigo</b>, <b>produto</b> e <b>quantidade</b>. Também são aceitos cabeçalhos “Código de barras”, “Nome” e “Qtd”. A importação atualiza produtos com o mesmo código e adiciona os novos.</p>
+ <div class="actions"><button class="secondary" onclick="downloadTemplate()">Baixar modelo Excel</button><button class="danger" onclick="clearAll()">Apagar todos os dados</button></div>
+ <h2 style="margin-top:22px">Movimentações recentes</h2>
+ <div class="tablewrap"><table><thead><tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd.</th></tr></thead><tbody id="historyRows"></tbody></table></div>
+</section>
+
+<div id="printArea" hidden><div class="printName" id="printName"></div><svg id="printBarcode"></svg><div class="printCode" id="printCode"></div></div>
+</main>
+<script>
+const KEY='estoque_interno_v1';
+let products=[], history=[], scanStream=null, scanTarget=null, scanLoop=false;
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY)||'{}');products=d.products||[];history=d.history||[]}catch(e){products=[];history=[]}}
+function save(){localStorage.setItem(KEY,JSON.stringify({products,history}));renderAll()}
+function showTab(id){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.getElementById(id).classList.add('active');if(id==='labels')refreshLabelOptions()}
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function ean13(){let base='';for(let i=0;i<12;i++)base+=Math.floor(Math.random()*10);let sum=0;for(let i=0;i<12;i++)sum+=Number(base[i])*(i%2?3:1);return base+((10-sum%10)%10)}
+function generateCode(){let c;do{c=ean13()}while(products.some(p=>p.code===c));document.getElementById('newCode').value=c}
+function addProduct(){let name=document.getElementById('newName').value.trim(),qty=Number(document.getElementById('newQty').value),code=document.getElementById('newCode').value.trim()||ean13();if(!name)return alert('Informe o nome do produto.');if(!Number.isInteger(qty)||qty<0)return alert('Informe uma quantidade válida.');if(products.some(p=>p.code===code))return alert('Este código já está cadastrado. Use a movimentação para adicionar quantidade.');products.push({code,name,qty,active:true});if(qty)history.unshift({date:new Date().toISOString(),code,name,type:'Entrada inicial',qty,note:'Cadastro'});document.getElementById('newName').value='';document.getElementById('newQty').value='0';document.getElementById('newCode').value='';save();alert('Produto cadastrado com sucesso.');showTab('inventory')}
+function registerMovement(){let code=document.getElementById('moveCode').value.trim(),qty=Number(document.getElementById('moveQty').value),type=document.getElementById('moveType').value,p=products.find(x=>x.code===code&&x.active);if(!p)return alert('Código não encontrado entre os produtos ativos.');if(!Number.isInteger(qty)||qty<1)return alert('Informe uma quantidade inteira maior que zero.');if(type==='out'&&qty>p.qty)return alert('Estoque insuficiente. Disponível: '+p.qty);p.qty+=type==='in'?qty:-qty;history.unshift({date:new Date().toISOString(),code,name:p.name,type:type==='in'?'Entrada':'Saída',qty,note:document.getElementById('moveNote').value.trim()});document.getElementById('moveFeedback').textContent=`${type==='in'?'Entrada':'Saída'} registrada: ${qty} unidade(s) de ${p.name}. Saldo: ${p.qty}.`;document.getElementById('moveQty').value=1;document.getElementById('moveNote').value='';save()}
+function archiveProduct(code){let p=products.find(x=>x.code===code);if(!p)return;if(p.qty!==0)return alert('Só é possível arquivar um produto com estoque zerado.');if(confirm(`Arquivar "${p.name}"? O código deixará de aceitar movimentações, mas o histórico será preservado.`)){p.active=false;save()}}
+function renderInventory(){let q=(document.getElementById('search')?.value||'').toLowerCase(),rows=products.filter(p=>p.active&&(p.name.toLowerCase().includes(q)||p.code.includes(q)));document.getElementById('inventoryRows').innerHTML=rows.length?rows.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.code)}</td><td><b>${p.qty}</b></td><td>${p.qty===0?`<button class="danger" style="padding:7px 9px" onclick="archiveProduct('${escapeHtml(p.code)}')">Arquivar</button>`:'<span class="badge">Ativo</span>'}</td></tr>`).join(''):'<tr><td colspan="4" class="empty">Nenhum produto encontrado.</td></tr>'}
+function refreshLabelOptions(){let s=document.getElementById('labelProduct'),old=s.value;s.innerHTML='<option value="">Selecione...</option>'+products.filter(p=>p.active).map(p=>`<option value="${escapeHtml(p.code)}">${escapeHtml(p.name)} — ${escapeHtml(p.code)}</option>`).join('');if(products.some(p=>p.code===old&&p.active))s.value=old;drawLabel()}
+function selectLabelByCode(){let c=document.getElementById('labelCode').value.trim();document.getElementById('labelProduct').value=products.some(p=>p.code===c&&p.active)?c:'';drawLabel()}
+function drawLabel(){let code=document.getElementById('labelProduct').value,p=products.find(x=>x.code===code&&x.active),preview=document.getElementById('labelPreview');if(!p){preview.innerHTML='<span class="note">Selecione um produto cadastrado.</span>';return}preview.innerHTML='<div style="text-align:center"><b>'+escapeHtml(p.name)+'</b><svg id="previewBarcode"></svg><div style="font-size:12px">'+escapeHtml(p.code)+'</div></div>';try{JsBarcode('#previewBarcode',p.code,{format:'CODE128',displayValue:false,height:55,margin:5,width:1.6})}catch(e){preview.textContent='Não foi possível gerar o código.'}}
+function printLabel(){let code=document.getElementById('labelProduct').value,p=products.find(x=>x.code===code&&x.active);if(!p)return alert('Selecione um produto.');document.getElementById('printName').textContent=p.name;document.getElementById('printCode').textContent=p.code;JsBarcode('#printBarcode',p.code,{format:'CODE128',displayValue:false,height:75,margin:5,width:2});window.print()}
+async function startScan(target){if(!('BarcodeDetector'in window)){alert('Este navegador não oferece leitura nativa de código de barras. Digite o código manualmente ou abra o aplicativo no Chrome atualizado para Android.');return}if(!navigator.mediaDevices?.getUserMedia){alert('A câmera exige acesso por HTTPS ou localhost.');return}stopScan();scanTarget=target;let v=document.getElementById('scanner');v.style.display='block';try{scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});v.srcObject=scanStream;await v.play();let detector=new BarcodeDetector({formats:['ean_13','ean_8','code_128','upc_a','upc_e','qr_code']});scanLoop=true;document.getElementById('scanStatus').textContent='Aponte a câmera para o código de barras...';const tick=async()=>{if(!scanLoop)return;try{let codes=await detector.detect(v);if(codes.length){document.getElementById(scanTarget).value=codes[0].rawValue;stopScan();if(scanTarget==='labelCode')selectLabelByCode();document.getElementById('scanStatus').textContent='Código lido: '+codes[0].rawValue;return}}catch(e){}requestAnimationFrame(tick)};tick()}catch(e){stopScan();alert('Não foi possível acessar a câmera. Verifique a permissão e use HTTPS.');}}
+function stopScan(){scanLoop=false;if(scanStream){scanStream.getTracks().forEach(t=>t.stop());scanStream=null}let v=document.getElementById('scanner');v.pause();v.srcObject=null;v.style.display='none'}
+function renderHistory(){document.getElementById('historyRows').innerHTML=history.slice(0,30).map(h=>`<tr><td>${new Date(h.date).toLocaleString('pt-BR')}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.type)}</td><td>${h.qty}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">Ainda não há movimentações.</td></tr>'}
+function renderAll(){renderInventory();renderHistory();let active=products.filter(p=>p.active);document.getElementById('totalProducts').textContent=active.length;document.getElementById('totalUnits').textContent=active.reduce((s,p)=>s+p.qty,0);document.getElementById('totalLow').textContent=active.filter(p=>p.qty===0).length;refreshLabelOptions()}
+function exportExcel(){if(!window.XLSX)return alert('Biblioteca Excel indisponível. Conecte-se à internet e tente novamente.');let wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(products.map(p=>({codigo:p.code,produto:p.name,quantidade:p.qty,status:p.active?'Ativo':'Arquivado'}))),'Produtos');XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(history.map(h=>({data:h.date,codigo:h.code,produto:h.name,tipo:h.type,quantidade:h.qty,observacao:h.note||''} ))),'Movimentacoes');XLSX.writeFile(wb,'controle_estoque.xlsx')}
+function norm(s){return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'')}
+function importExcel(ev){let f=ev.target.files[0];if(!f)return;if(!window.XLSX)return alert('Biblioteca Excel indisponível.');let r=new FileReader();r.onload=e=>{try{let wb=XLSX.read(e.target.result,{type:'array'}),ws=wb.Sheets[wb.SheetNames[0]],rows=XLSX.utils.sheet_to_json(ws,{defval:''});let added=0,updated=0;rows.forEach(row=>{let o={};Object.keys(row).forEach(k=>o[norm(k)]=row[k]);let code=String(o.codigo||o.codigodebarras||o.ean||'').trim(),name=String(o.produto||o.nome||o.descricao||'').trim(),qty=Number(o.quantidade??o.qtd??o.estoque??0);if(!code||!name||!Number.isInteger(qty)||qty<0)return;let p=products.find(x=>x.code===code);if(p){p.name=name;p.qty=qty;p.active=true;updated++}else{products.push({code,name,qty,active:true});added++}});save();alert(`Importação concluída. Novos: ${added}. Atualizados: ${updated}.`)}catch(err){alert('Não foi possível ler a planilha. Confira o modelo.')}};r.readAsArrayBuffer(f);ev.target.value=''}
+function downloadTemplate(){if(!window.XLSX)return alert('Biblioteca Excel indisponível.');let wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet([{codigo:'7891234567890',produto:'Produto exemplo',quantidade:10}]),'Produtos');XLSX.writeFile(wb,'modelo_importacao_estoque.xlsx')}
+function clearAll(){if(confirm('Tem certeza? Todos os produtos e movimentações deste navegador serão apagados. Exporte uma cópia antes.')){products=[];history=[];save()}}
+load();renderAll();
+</script>
+</body>
+</html>
